@@ -370,6 +370,13 @@ begin
 end;
 $$;
 
+-- Pin search_path so session/role settings cannot shadow application objects.
+alter function public.bikribot_preserve_page_access_token() set search_path = pg_catalog, public;
+alter function public.bikribot_touch_customer_on_message() set search_path = pg_catalog, public;
+alter function public.bikribot_scrub_terminal_order_quote() set search_path = pg_catalog, public;
+alter function public.bikribot_confirm_order_quote(uuid, text, uuid) set search_path = pg_catalog, public;
+alter function public.bikribot_redact_order_details(text, uuid, text) set search_path = pg_catalog, public;
+
 -- ───────────── Demo seed (safe to re-run) ─────────────
 insert into pages (page_id, shop_name, agent_name, shop_info)
 values (

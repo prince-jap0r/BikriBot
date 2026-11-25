@@ -32,6 +32,14 @@ test("PostgreSQL schema installs and quote confirmation is atomic, replay-safe, 
     );
     assert.equal(rls.rows[0]!.relrowsecurity, true);
 
+    const hardenedFunctions = await db.query<{ count: number }>(
+      `select count(*)::int as count from pg_proc
+       where proname in ('bikribot_preserve_page_access_token','bikribot_touch_customer_on_message',
+         'bikribot_scrub_terminal_order_quote','bikribot_confirm_order_quote','bikribot_redact_order_details')
+         and coalesce(array_to_string(proconfig, ';'), '') like '%search_path=%'`,
+    );
+    assert.equal(hardenedFunctions.rows[0]!.count, 5);
+
     // An omitted write-only token must not erase an existing page token on upsert.
     await db.exec("update pages set page_access_token = 'test-only-token' where page_id = 'demo'");
     await db.exec("update pages set shop_info = 'updated', page_access_token = null where page_id = 'demo'");
