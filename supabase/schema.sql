@@ -351,18 +351,27 @@ as $$
      and (position(p_address in content) > 0 or content ~ '((\\+?880)?0?1[3-9][0-9০-৯]{8})');
 $$;
 
+revoke all on function bikribot_preserve_page_access_token() from public;
+revoke all on function bikribot_touch_customer_on_message() from public;
+revoke all on function bikribot_scrub_terminal_order_quote() from public;
 revoke all on function bikribot_confirm_order_quote(uuid, text, uuid) from public;
 revoke all on function bikribot_redact_order_details(text, uuid, text) from public;
 do $$
+declare
+  v_grantee text;
 begin
-  if exists (select 1 from pg_roles where rolname = 'anon') then
-    execute 'revoke all on function bikribot_confirm_order_quote(uuid, text, uuid) from anon';
-    execute 'revoke all on function bikribot_redact_order_details(text, uuid, text) from anon';
-  end if;
-  if exists (select 1 from pg_roles where rolname = 'authenticated') then
-    execute 'revoke all on function bikribot_confirm_order_quote(uuid, text, uuid) from authenticated';
-    execute 'revoke all on function bikribot_redact_order_details(text, uuid, text) from authenticated';
-  end if;
+  for v_grantee in select rolname from pg_roles where rolname in ('anon', 'authenticated') loop
+    execute format('revoke all on all tables in schema public from %I', v_grantee);
+    execute format('revoke all on all sequences in schema public from %I', v_grantee);
+    execute format('revoke all on function bikribot_preserve_page_access_token() from %I', v_grantee);
+    execute format('revoke all on function bikribot_touch_customer_on_message() from %I', v_grantee);
+    execute format('revoke all on function bikribot_scrub_terminal_order_quote() from %I', v_grantee);
+    execute format('revoke all on function bikribot_confirm_order_quote(uuid, text, uuid) from %I', v_grantee);
+    execute format('revoke all on function bikribot_redact_order_details(text, uuid, text) from %I', v_grantee);
+    execute format('alter default privileges for role %I in schema public revoke all on tables from %I', current_user, v_grantee);
+    execute format('alter default privileges for role %I in schema public revoke all on sequences from %I', current_user, v_grantee);
+    execute format('alter default privileges for role %I in schema public revoke execute on functions from %I', current_user, v_grantee);
+  end loop;
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     execute 'grant execute on function bikribot_confirm_order_quote(uuid, text, uuid) to service_role';
     execute 'grant execute on function bikribot_redact_order_details(text, uuid, text) to service_role';

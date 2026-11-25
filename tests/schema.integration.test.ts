@@ -19,18 +19,57 @@ test("PostgreSQL schema installs and quote confirmation is atomic, replay-safe, 
     );
     assert.equal(legacyRpc.rows[0]!.count, 0);
 
-    const rpcGrants = await db.query<{ service_can_confirm: boolean; anon_can_confirm: boolean; authenticated_can_confirm: boolean }>(
+    const rpcGrants = await db.query<{ service_can_confirm: boolean; service_can_redact: boolean; anon_can_confirm: boolean; authenticated_can_confirm: boolean }>(
       `select has_function_privilege('service_role', 'bikribot_confirm_order_quote(uuid,text,uuid)', 'execute') as service_can_confirm,
+              has_function_privilege('service_role', 'bikribot_redact_order_details(text,uuid,text)', 'execute') as service_can_redact,
               has_function_privilege('anon', 'bikribot_confirm_order_quote(uuid,text,uuid)', 'execute') as anon_can_confirm,
               has_function_privilege('authenticated', 'bikribot_confirm_order_quote(uuid,text,uuid)', 'execute') as authenticated_can_confirm`,
     );
     assert.equal(rpcGrants.rows[0]!.service_can_confirm, true);
+    assert.equal(rpcGrants.rows[0]!.service_can_redact, true);
     assert.equal(rpcGrants.rows[0]!.anon_can_confirm, false);
     assert.equal(rpcGrants.rows[0]!.authenticated_can_confirm, false);
-    const rls = await db.query<{ relrowsecurity: boolean }>(
-      "select relrowsecurity from pg_class where relname = 'order_quotes'",
+    const rls = await db.query<{ count: number }>(
+      `select count(*)::int as count from pg_class c join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relname = any(array['pages','products','delivery_zones','customers','messages','customer_memories','orders','order_quotes'])
+         and c.relrowsecurity`,
     );
-    assert.equal(rls.rows[0]!.relrowsecurity, true);
+    assert.equal(rls.rows[0]!.count, 8);
+
+    const tableGrants = await db.query<{ count: number }>(
+      `select count(*)::int as count from information_schema.role_table_grants
+       where table_schema = 'public' and grantee in ('anon','authenticated')`,
+    );
+    assert.equal(tableGrants.rows[0]!.count, 0);
+    await db.exec("create table public.default_privilege_probe (id integer); create sequence public.default_privilege_probe_seq;");
+    const defaultTableGrants = await db.query<{ count: number }>(
+      `select count(*)::int as count from information_schema.role_table_grants
+       where table_schema = 'public' and table_name = 'default_privilege_probe' and grantee in ('anon','authenticated')`,
+    );
+    assert.equal(defaultTableGrants.rows[0]!.count, 0);
+    const defaultSequenceGrants = await db.query<{ anon_can_use: boolean; authenticated_can_use: boolean }>(
+      `select has_sequence_privilege('anon','public.default_privilege_probe_seq','USAGE') as anon_can_use,
+              has_sequence_privilege('authenticated','public.default_privilege_probe_seq','USAGE') as authenticated_can_use`,
+    );
+    assert.equal(defaultSequenceGrants.rows[0]!.anon_can_use, false);
+    assert.equal(defaultSequenceGrants.rows[0]!.authenticated_can_use, false);
+    await db.exec("create function public.default_privilege_probe_function() returns integer language sql as $$ select 1 $$;");
+    const defaultFunctionGrants = await db.query<{ count: number }>(
+      `select count(*)::int as count from information_schema.role_routine_grants
+       where specific_schema = 'public' and routine_name = 'default_privilege_probe_function'
+         and grantee in ('anon','authenticated')`,
+    );
+    assert.equal(defaultFunctionGrants.rows[0]!.count, 0);
+
+    const appFunctionAccess = await db.query<{ anon_can_execute: boolean; authenticated_can_execute: boolean }>(
+      `select bool_or(has_function_privilege('anon', p.oid, 'EXECUTE')) as anon_can_execute,
+              bool_or(has_function_privilege('authenticated', p.oid, 'EXECUTE')) as authenticated_can_execute
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname in ('bikribot_preserve_page_access_token','bikribot_touch_customer_on_message',
+         'bikribot_scrub_terminal_order_quote','bikribot_confirm_order_quote','bikribot_redact_order_details')`,
+    );
+    assert.equal(appFunctionAccess.rows[0]!.anon_can_execute, false);
+    assert.equal(appFunctionAccess.rows[0]!.authenticated_can_execute, false);
 
     const hardenedFunctions = await db.query<{ count: number }>(
       `select count(*)::int as count from pg_proc
